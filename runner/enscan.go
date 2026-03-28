@@ -17,26 +17,26 @@ func (j *EnJob) SearchByKeyWord(keyword string) (string, error) {
 		gologger.Error().Msg(err.Error())
 		return "", err
 	}
-	
+
 	// 检查搜索结果是否为空
 	if len(enList) == 0 {
 		gologger.Error().Msgf("关键词：\"%s\" 未查询到任何结果", keyword)
 		return "", fmt.Errorf("关键词：\"%s\" 未查询到任何结果", keyword)
 	}
-	
+
 	enMap := j.job.GetENMap()["enterprise_info"]
 	gologger.Info().Msgf("关键词：\"%s\" 查询到 %d 个结果，默认选择第一个 \n", keyword, len(enList))
 	//展示结果
 	utils.TBS(append(enMap.KeyWord[:3], "PID"), append(enMap.Field[:3], enMap.Field[10]), "企业信息", enList)
 	// 选择第一个的PID
 	pid := enList[0].Get(enMap.Field[10]).String()
-	
+
 	// 检查PID是否为空
 	if pid == "" {
 		gologger.Error().Msgf("关键词：\"%s\" 获取到的PID为空", keyword)
 		return "", fmt.Errorf("关键词：\"%s\" 获取到的PID为空", keyword)
 	}
-	
+
 	gologger.Debug().Str("PID", pid).Msgf("搜索")
 	return pid, nil
 }
@@ -62,7 +62,8 @@ func (j *EnJob) getInfoById(pid string, searchList []string) error {
 		return nil
 	}
 	gologger.Info().Msgf("DPS长度：%d", len(dps))
-	j.newTaskQueue(len(dps) * 2)
+	// 这里不知道为什么要设置一个很大的队列长度，否则会卡死
+	j.newTaskQueue(999999)
 	j.StartWorkers()
 	for _, dp := range dps {
 		j.AddTask(DeepSearchTask{
@@ -124,6 +125,7 @@ func (j *EnJob) getInfoList(pid string, em *common.EnsGo, sk string, ref string)
 		// 如果第一页获取失败，就不继续了，判断直接失败
 		return resData, err
 	}
+	listData = data.Data
 	// 如果一页能获取完就不翻页了
 	if data.Size < data.Total && data.Size > 0 {
 		pages := int((data.Total + data.Size - 1) / data.Size)
@@ -157,9 +159,9 @@ func (j *EnJob) getInfoList(pid string, em *common.EnsGo, sk string, ref string)
 func (j *EnJob) processTask(task DeepSearchTask) {
 	gologger.Info().Msgf("【%d,%d】正在获取⌈%s⌋信息，关联原因 %s", j.processed, j.total, task.Name, task.Ref)
 	data := j.getCompanyInfoById(task.Pid, task.SearchList, task.Ref)
-	j.wg.Done()
 	// 如果已经到了对应层级就不需要跑了
 	if task.Deep >= j.job.GetEnsD().Op.Deep {
+		j.wg.Done()
 		return
 	}
 	gologger.Info().Msgf("⌈%s⌋深度搜索到第⌈%d⌋层", task.Name, task.Deep)
@@ -171,6 +173,8 @@ func (j *EnJob) processTask(task DeepSearchTask) {
 			task.SearchList,
 		})
 	}
+	// 所有子任务添加完成后再调用 Done，防止竞态导致的 "send on closed channel"
+	j.wg.Done()
 }
 
 // getDPS 根据List和规则筛选需要深度搜索的规则
